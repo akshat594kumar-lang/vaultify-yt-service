@@ -1,5 +1,5 @@
 const express = require('express');
-const { Innertube } = require('youtubei.js');
+const { Innertube, ClientType } = require('youtubei.js');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -11,7 +11,10 @@ async function initYT() {
     yt = await Innertube.create({
       lang: 'en',
       location: 'IN',
-      retrieve_player: true
+      client_type: ClientType.TV_EMBEDDED, // ✅ Yeh line important hai
+      retrieve_player: true,
+      generate_session_locally: true,
+      device_category: 'mobile',
     });
   }
   return yt;
@@ -59,9 +62,9 @@ app.get('/yt-stream', async (req, res) => {
     if (!videoId) return res.json({ url: null, error: 'No video ID' });
 
     const youtube = await initYT();
+    // ✅ getBasicInfo use karo, getInfo nahi
     const info = await youtube.getBasicInfo(videoId);
 
-    // Get streaming data with proper deciphering
     const format = info.chooseFormat({
       type: 'audio',
       quality: 'best'
@@ -70,14 +73,14 @@ app.get('/yt-stream', async (req, res) => {
     let streamUrl = null;
 
     if (format) {
-      // Try decipher method first
       try {
+        // ✅ Pehle decipher try karo
         streamUrl = format.decipher(youtube.session.player);
       } catch (e) {
         console.log('Decipher failed:', e.message);
       }
       
-      // Fallback to direct url
+      // Agar decipher fail ho, toh direct URL try karo
       if (!streamUrl && format.url) {
         streamUrl = format.url;
       }
@@ -94,7 +97,7 @@ app.get('/yt-stream', async (req, res) => {
   }
 });
 
-// Direct proxy — streams the audio through Render (avoids 403)
+// ✅ Audio Proxy - Yeh 403 error ko bypass karega
 app.get('/yt-proxy', async (req, res) => {
   try {
     const videoId = req.query.id;
