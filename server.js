@@ -11,7 +11,7 @@ async function initYT() {
     yt = await Innertube.create({
       lang: 'en',
       location: 'IN',
-      retrieve_player: false
+      retrieve_player: true
     });
   }
   return yt;
@@ -59,27 +59,69 @@ app.get('/yt-stream', async (req, res) => {
     if (!videoId) return res.json({ url: null, error: 'No video ID' });
 
     const youtube = await initYT();
-    const info = await youtube.getInfo(videoId);
+    const info = await youtube.getBasicInfo(videoId);
 
+    // Get streaming data with proper deciphering
     const format = info.chooseFormat({
       type: 'audio',
       quality: 'best'
     });
 
-    if (format && format.url) {
-      res.json({ url: format.url, source: 'youtube', format: format.mime_type });
+    let streamUrl = null;
+
+    if (format) {
+      // Try decipher method first
+      try {
+        streamUrl = format.decipher(youtube.session.player);
+      } catch (e) {
+        console.log('Decipher failed:', e.message);
+      }
+      
+      // Fallback to direct url
+      if (!streamUrl && format.url) {
+        streamUrl = format.url;
+      }
+    }
+
+    if (streamUrl) {
+      res.json({ url: streamUrl, source: 'youtube', mime: format.mime_type });
     } else {
-      // Fallback — decipher
-      const stream = await info.download({
-        type: 'audio',
-        quality: 'best',
-        format: 'mp4'
-      });
-      res.json({ url: null, error: 'No direct URL, stream unavailable' });
+      res.json({ url: null, error: 'No stream URL available' });
     }
   } catch (e) {
     console.error('Stream error:', e.message);
     res.json({ url: null, error: e.message });
+  }
+});
+
+// Direct proxy — streams the audio through Render (avoids 403)
+app.get('/yt-proxy', async (req, res) => {
+  try {
+    const videoId = req.query.id;
+    if (!videoId) return res.status(400).json({ error: 'No video ID' });
+
+    const youtube = await initYT();
+    const stream = await youtube.download(videoId, {
+      type: 'audio',
+      quality: 'best',
+      format: 'mp4'
+    });
+
+    // Stream directly to client
+    res.setHeader('Content-Type', 'audio/mp4');
+    res.setHeader('Accept-Ranges', 'bytes');
+    
+    const reader = stream.getReader();
+    const pump = async () => {
+      const { done, value } = await reader.read();
+      if (done) { res.end(); return; }
+      res.write(Buffer.from(value));
+      pump();
+    };
+    pump();
+  } catch (e) {
+    console.error('Proxy error:', e.message);
+    if (!res.headersSent) res.status(500).json({ error: e.message });
   }
 });
 
